@@ -3,6 +3,7 @@ library(lubridate)
 library(shiny)
 library(bslib)
 library(scales)
+library(plotly)
 
 #--- reading the required data
 hmis_jul_oct <- read_csv("data/july_oct_hmis_cleaned-with-pop.csv")
@@ -12,8 +13,9 @@ hmis_jul_oct <- hmis_jul_oct |>
   mutate(
     month = month(greg_date, label = TRUE, abbr = TRUE),
     year = year(greg_date),
-    month_year = paste(month, year, sep = "-")
-  )
+    month_year = paste(month, year, sep = "-"),
+    month_year = factor(month_year, levels = c("Jul-2025", "Aug-2025",
+                                               "Sep-2025", "Oct-2025")))
 
 regions <- c("Addis Ababa", "Afar", "Amhara","Benishangul Gumuz",
              "Central", "Dire Dawa", "Gambella","Harari", "Oromia",
@@ -26,10 +28,30 @@ months <- hmis_jul_oct |>
 
 indicators <- sort(unique(as.character(hmis_jul_oct$data_type)))
 
+# adding bootstrap theme
+app_theme <- bs_theme(
+  version = 5,
+  bootswatch = "sandstone",   # try: "journal", "cosmo", "minty", "flately
+  primary = "#0072B2",     # NMP-friendly blue
+  secondary = "#E69F00",
+  base_font = font_google("Inter"),
+  heading_font = font_google("Inter")
+)
+
+
 # --- UI ---
 ui <- page_sidebar(
-  title = "NMP Dashboard",
+  title = "NMEP Dashboard",
+  theme = app_theme,
   sidebar = sidebar(
+    # Logo at the top
+    div(
+      style = "display: flex; justify-content: center; align-items: center; padding: 10px 0;",
+      img(
+        src = "logo.png",
+        style = "height: 200px; width: auto;"  # preserves aspect ratio
+      )
+    ),
     selectInput(
       inputId = "region",
       label = "Select Region",
@@ -55,41 +77,31 @@ ui <- page_sidebar(
   
   # ---- Horizontal Value Boxes at Top ----
   layout_column_wrap(
-    width = 1/4,        # 4 boxes in a row
-    height = "50px",   # compact height
-    gap = "1rem",       # spacing between boxes
+    value_box(
+      title = "Total Tests", # Title
+      value = textOutput("vb_tested"),         # Value to show
+      #showcase = bsicons::bs_icon("laptop"), #include an icon
+      theme = "blue" # change the box theme colour
+    ), 
     
     value_box(
-      title = "Total Tests",
-      value = textOutput("vb_tested"),
-      #showcase = bsicons::bs_icon("activity"),
-      theme = "info",
-      style = "font-size: 20px; font-weight: bold;",  # reduce font size
-      height = "50px"
-    ),
-    value_box(
-      title = "Total Confirmed Cases",
-      value = textOutput("vb_confirmed"),
-      #showcase = bsicons::bs_icon("activity"),
-      theme = "info",
-      height = "50px"
-    ),
-    value_box(
-      title = "Total Cases (Conf + Presumed)",
-      value = textOutput("vb_allcases"),
-      #showcase = bsicons::bs_icon("activity"),
-      theme = "info",
-      height = "50px"
-    ),
-    value_box(
-      title = "Malaria-Related Death",
-      value = textOutput("vb_death"),
-      #showcase = bsicons::bs_icon("activity"),
-      theme = "danger",
-      height = "50px"
-    )
+      title = "Total Confirmed Cases", 
+      value = textOutput("vb_confirmed"), 
+      #showcase = bsicons::bs_icon("calendar"), 
+      #showcase_layout = "top right", 
+      theme = "blue" 
+    ), 
+    
+    # 3rd value box
+    value_box(title = "Total Cases (Conf + Presumed)", 
+              value = textOutput("vb_allcases"),
+              theme = "blue"),
+    
+    #4th value box
+    value_box(title = "Malaria-Related Death", 
+              value = textOutput("vb_death"),
+              theme = "red"),
   ),
-  
   # Plots below KPIs
   layout_column_wrap(
     width = 1/2, gap = "1rem",
@@ -97,25 +109,25 @@ ui <- page_sidebar(
     # Plot 1: Test and positivity trend
     card(
       card_header("Tests & Positivity Trend"),
-      plotOutput("plot_test_positivity", height = "300px")
+      plotlyOutput("plot_test_positivity", height = "300px")
     ),
     
     # Plot 2: Species proportion
     card(
       card_header("Species Proportion"),
-      plotOutput("plot_species_proportion", height = "300px")
+      plotlyOutput("plot_species_proportion", height = "300px")
     ),
     
     # Plot 3: Incidence rate per 1000
     card(
-      card_header("Incidence rate (per 1000)"),
-      plotOutput("plot_incidence", height = "300px")
+      card_header("Parasitic Incidence rate (per 1000)"),
+      plotlyOutput("plot_incidence", height = "300px")
     ),
     
     # Plot 4: Death rate per 100000
     card(
       card_header("Malaria-related Death"),
-      plotOutput("plot_death_rate", height = "300px")
+      plotlyOutput("plot_death_rate", height = "300px")
     )
   ))
 
@@ -172,96 +184,71 @@ server <- function(input, output, session) {
   })
   
   # plot 1: Test and Positivity trend
-  output$plot_test_positivity <- renderPlot({
+  output$plot_test_positivity <- renderPlotly({
     
-    # Prepare data
     df <- filtered_data() |>
       group_by(month_year) |>
       summarise(
         total_tested = sum(value[data_type == "tested"], na.rm = TRUE),
-        total_confirmed = sum(value[data_type == "positives"], na.rm = TRUE)
+        total_confirmed = sum(value[data_type == "positives"], na.rm = TRUE),
+        .groups = "drop"
       ) |>
-      mutate(
-        positivity = (total_confirmed / total_tested) * 100
-      ) |>
-      arrange(month_year)
+      mutate(TPR = total_confirmed / total_tested * 100)
     
-    # For secondary axis scaling
-    max_tests <- max(df$total_tested, na.rm = TRUE)
-    
-    ggplot(df, aes(x = month_year)) +
-      # --- Bars for total tests ---
-      geom_col(aes(y = total_tested), fill = "cyan4", alpha = 0.8) +
-      
-      # --- Line for positivity rate (%) ---
-      geom_line(
-        aes(y = positivity * max_tests / 100),
-        color = "orange1",
-        size = 1.5,
-        group = 1
-      ) +
-      geom_point(
-        aes(y = positivity * max_tests / 100),
-        color = "black",
-        size = 3
-      ) +
-      
-      # --- Y-axis formatting ---
-      scale_y_continuous(
+    plot_ly(df, x = ~month_year) |>
+      add_bars(
+        y = ~total_tested,
         name = "Total Tests",
-        labels = scales::comma,   # avoid scientific notation
-        sec.axis = sec_axis(
-          trans = ~ . / max_tests * 100,
-          name = "Positivity (%)"
-        )
-      ) +
-      
-      # --- Labels & theme ---
-      labs(
-        x = "Month-Year",
-        #title = "Testing Volume and Positivity Rate Over Time"
-      ) +
-      theme_minimal(base_size = 13) +
-      theme(
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        plot.title = element_text(face = "bold"),
-        axis.title.y.right = element_text(face = "bold"),
-        axis.title.y.left  = element_text(face = "bold"),
-        axis.title.x = element_text(face = "bold")
+        marker = list(color = "#008B8B"),
+        hovertemplate = "Tests: %{y:,}<extra></extra>"
+      ) |>
+      add_lines(
+        y = ~TPR,
+        name = "TPR (%)",
+        yaxis = "y2",
+        mode = "lines+markers", #adding points to the line graph
+        line = list(color = "#FFA500", width = 3),
+        marker = list(size = 7, color = "#FFA500"), 
+        hovertemplate = "TPR: %{y:.1f}%<extra></extra>"
+      ) |>
+      layout(
+        yaxis = list(
+          title = "Total Tests",
+          tickformat = ","
+        ),
+        yaxis2 = list(
+          title = "TPR (%)",
+          overlaying = "y",
+          side = "right",
+          showticklabels = FALSE,   # 👈 hide numbers
+          ticks = "" 
+        ),
+        xaxis = list(title = "Month-Year"),
+        #legend = list(orientation = "h"),
+        showlegend = FALSE,
+        hovermode = "x unified"
       )
   })
   
-  # Plot 2: species proportion
-  output$plot_species_proportion <- renderPlot({
-    filtered_data() |>
-      filter(data_type %in% c("pf_conf","pv_conf","mixed_conf")) |>
-      mutate(data_type = factor(data_type,
-                                levels = c("pf_conf", "pv_conf", "mixed_conf"))) |>
-      group_by(data_type) |>
-      summarise(total = sum(value, na.rm = TRUE)) |>
-      mutate(prop = total / sum(total),                               # calculate proportion
-             label = scales::percent(prop, accuracy = 0.1)) |>        # format label
-      ggplot(aes(x = "", y = prop, fill = data_type)) +               # use prop for proper pie
-      geom_col() +
-      coord_polar(theta = "y") +
-      geom_text(aes(label = label), 
-                position = position_stack(vjust = 0.5),               # center labels
-                size = 4, fontface = "bold") +
-      scale_fill_manual(
-        values = c(
-          "pf_conf" = "cyan4",       # red shade
-          "pv_conf" = "orange1",       # blue shade
-          "mixed_conf" = "grey"     # green/teal shade
-        )
-      ) +
-      theme_void() +
-      labs(fill = "Species")
-  })
-  
-  # Plot 3: Incidence rate
-  output$plot_incidence <- renderPlot({
+  # Plot 2: species proportion with hover percentages
+  output$plot_species_proportion <- renderPlotly({
     
-    # Start from filtered_data() for incidence components
+    df <- filtered_data() |>
+      filter(data_type %in% c("pf_conf","pv_conf","mixed_conf")) |>
+      group_by(data_type) |>
+      summarise(total = sum(value, na.rm = TRUE))
+    
+    plot_ly(df, labels = ~data_type, values = ~total, type = 'pie',
+            textinfo = 'none', hoverinfo = 'label+percent',
+            marker = list(colors = c("#808080", "#008B8B", "#FFA500"))) %>%
+      layout(
+        margin = list(l = 0, r = 0, t = 0, b = 0)  # remove extra space
+      )
+  })
+  # Plot 3: Incidence rate
+  output$plot_incidence <- renderPlotly({
+    
+    # --- Prepare data ---
     df <- filtered_data() |> 
       filter(data_type %in% c("tested", "positives", "presumed")) |>
       pivot_wider(names_from = data_type, values_from = value, values_fill = 0) |> 
@@ -279,7 +266,7 @@ server <- function(input, output, session) {
         incidence = (adjusted_positive / population) * 1000
       )
     
-    # Aggregate nationally if no regions selected
+    # --- Aggregate nationally if "All Regions" is selected or nothing selected ---
     if (is.null(input$region) || length(input$region) == 0 || "All Regions" %in% input$region) {
       df <- df |> 
         group_by(month_year) |> 
@@ -295,21 +282,31 @@ server <- function(input, output, session) {
       df <- df |> filter(region %in% input$region)
     }
     
-    # Plot
-    ggplot(df, aes(x = reorder(region, incidence), y = incidence)) +
-      geom_col(position = "dodge", fill= "cyan4") +
+    # --- Create ggplot object ---
+    parasitic_inc <- ggplot(df, aes(
+      x = reorder(region, incidence), 
+      y = incidence,
+      text = paste0("Parasitic Incidence: ", round(incidence, 2), " per 1,000")  # hover text
+    )) +
+      geom_col(fill = "cyan4", position = "identity") +
       labs(
-        x = "Region / National",
+        x = "",
         y = "Incidence per 1000"
       ) +
       scale_y_continuous(labels = scales::comma_format()) +
-      theme_minimal(base_size = 13) +
+      theme_minimal(base_size = 11) +
       coord_flip() +
-      theme(axis.title = element_text(face = "bold"))
+      theme(
+        axis.title = element_text(face = "plain")  # not bold
+      )
+    
+    # --- Convert to plotly ---
+    ggplotly(parasitic_inc, tooltip = "text")
   })
   
+  
   # Plot 4: Death rate
-  output$plot_death_rate <- renderPlot({
+  output$plot_death_rate <- renderPlotly({
     
     # Start from filtered_data() for deaths
     df <- filtered_data() |>
@@ -326,27 +323,41 @@ server <- function(input, output, session) {
     
     # If no regions selected, calculate national totals
     if (is.null(input$region) || length(input$region) == 0 || "All Regions" %in% input$region) {
-      df <- df |> 
+      df <- df |>
         summarise(
           total_deaths = sum(total_deaths, na.rm = TRUE),
           population   = sum(population, na.rm = TRUE),
           rate_per_100k = total_deaths / population * 100000
         ) |>
         mutate(region = "National")
+    } else {
+      # Filter for selected regions
+      df <- df |> filter(region %in% input$region)
     }
     
     # Plot
-    ggplot(df, aes(x = reorder(region, rate_per_100k), y = rate_per_100k, fill = region)) +
-      geom_col(show.legend = FALSE, fill= "cyan4") +
+    death_plot <- ggplot(df, aes(
+      x = reorder(region, rate_per_100k),
+      y = rate_per_100k,
+      text = paste0("Death: ", round(rate_per_100k, 2), " per 100,000")
+    )) +
+      geom_col(show.legend = FALSE, fill = "cyan4") +
       labs(
         x = "Region / National",
         y = "Deaths per 100,000"
       ) +
-      theme_minimal(base_size = 13) +
+      theme_minimal(base_size = 11) +
       coord_flip() +
-      theme(axis.title = element_text(face = "bold"))
+      theme(
+        axis.title = element_text(face = "plain")  # remove bold
+      )
+    
+    ggplotly(death_plot, tooltip = "text")
   })
 }
 
 # --- Run the App ---
 shinyApp(ui = ui, server = server)
+
+
+
