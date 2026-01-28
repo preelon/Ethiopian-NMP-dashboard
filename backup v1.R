@@ -48,16 +48,10 @@ hmis_jul_dec <- hmis_jul_dec |>
     month_year = paste(month, year, sep = "-"),
     month_year = factor(
       month_year,
-      levels = c("Jul-2025", "Aug-2025", "Sep-2025", "Oct-2025", "Nov-2025", "Dec-2025")
+      levels = c("Jul-2025", "Aug-2025", "Sep-2025", "Oct-2025", "Nov-2025")
     )
   ) |>
-  mutate(
-    greg_month = factor(greg_month,
-                        levels = c("Jul", "Aug", "Sep", "Oct", "Nov", "Dec")),
-    greg_year = factor(as.character(greg_year),
-                       levels = "2025")
-  )
-#select(-greg_month, -greg_year)
+  select(-greg_month, -greg_year)
 # Region Options 
 regions <- c("Addis Ababa", "Afar", "Amhara","Benishangul Gumuz",
              "Central", "Dire Dawa", "Gambella","Harari", "Oromia",
@@ -147,23 +141,14 @@ ui <- page_sidebar(
       multiple = TRUE
     ),
     
-    # Year filter
+    # Month-Year
     selectizeInput(
-      inputId = "year",
-      label = "Select Year",
-      choices = c("All Years", as.character(levels(hmis_jul_dec$greg_year))),
-      selected = "All Years",
-      multiple = TRUE
-    ),
-    
-    # Month filter
-    selectizeInput(
-      inputId = "month",
-      label = "Select Month",
-      choices = c("All Months", as.character(levels(hmis_jul_dec$greg_month))),
+      inputId = "month_year",
+      label = "Select Month-Year",
+      choices = c("All Months", months),
       selected = "All Months",
       multiple = TRUE
-    )
+    ),
   ),
   
   # =====================
@@ -202,9 +187,9 @@ ui <- page_sidebar(
             tags$li(strong("Test Positivity Rate (TPR): "),
                     "Confirmed malaria cases divided by the number tested."),
             tags$li(strong("Incidence Rate: "),
-                    "Estimated malaria cases per 1,000 population at risk per month (annualized if monthly view)."),
+                    "Estimated malaria cases per 1,000 population per month (annualized if monthly view)."),
             tags$li(strong("Death Rate: "),
-                    "Malaria-related deaths per 100,000 population at risk (annualized if monthly view).")
+                    "Malaria-related deaths per 100,000 population (annualized if monthly view).")
           )
         )
       ),
@@ -352,27 +337,15 @@ server <- function(input, output, session) {
   # 1 Make region selection mutually exclusive
   observeEvent(input$region, ignoreInit = TRUE, {
     sel <- input$region
-    if (is.null(sel)) return()
+    if (is.null(sel) || length(sel) == 0) return()
     
-    # If user selects specific regions, remove "All Regions"
     if ("All Regions" %in% sel && length(sel) > 1) {
-      updateSelectizeInput(
-        session,
-        "region",
-        selected = setdiff(sel, "All Regions")
-      )
+      updateSelectizeInput(session, "region", selected = "All Regions")
     }
-    
-    # If nothing is selected, revert to "All Regions"
-    if (length(sel) == 0) {
-      updateSelectizeInput(
-        session,
-        "region",
-        selected = "All Regions"
-      )
+    if (!"All Regions" %in% sel && length(sel) == 0) {
+      updateSelectizeInput(session, "region", selected = "All Regions")
     }
   })
-  
   
   # -----------------------------
   # 2️ Update zones dynamically based on selected region
@@ -397,84 +370,34 @@ server <- function(input, output, session) {
   
   # -----------------------------
   # 3️ Make zone selection mutually exclusive
-  # Make zone selection mutually exclusive (All vs specific zones)
   observeEvent(input$zone, ignoreInit = TRUE, {
     sel <- input$zone
-    if (is.null(sel)) return()
-    
-    # If user selects specific zones, remove "All Zones"
+    if (is.null(sel) || length(sel) == 0) return()
     if ("All Zones" %in% sel && length(sel) > 1) {
-      updateSelectizeInput(
-        session,
-        "zone",
-        selected = setdiff(sel, "All Zones")
-      )
+      updateSelectizeInput(session, "zone", selected = "All Zones")
     }
-    
-    # If nothing is selected, revert to "All Zones"
-    if (length(sel) == 0) {
-      updateSelectizeInput(
-        session,
-        "zone",
-        selected = "All Zones"
-      )
+    if (!"All Zones" %in% sel && length(sel) == 0) {
+      updateSelectizeInput(session, "zone", selected = "All Zones")
     }
   })
-  
-  
   
   # -----------------------------
-  # Year mutual exclusivity
-  observeEvent(input$year, ignoreInit = TRUE, {
-    sel <- input$year
-    
-    if (is.null(sel)) return() 
-    # if a specific year is selected remove all years option
-    if ("All Years" %in% sel && length(sel) >1) {
-      updateSelectizeInput(
-        session,
-        "year",
-        selected = setdiff(sel, "All Years")
-      )
+  # 4 Month-Year mutual exclusivity
+  observeEvent(input$month_year, ignoreInit = TRUE, {
+    sel <- input$month_year
+    if (is.null(sel) || length(sel) == 0) return()
+    if ("All Months" %in% sel && length(sel) > 1) {
+      updateSelectizeInput(session, "month_year", selected = "All Months")
     }
-    #if nothing is selected, revert to "All Years"
-    if (length(sel) ==0){
-      updateSelectizeInput(
-        session,
-        "year",
-        selected = "All Years"
-      )
+    if (!"All Months" %in% sel && length(sel) == 0) {
+      updateSelectizeInput(session, "month_year", selected = "All Months")
     }
   })
-  
-  # 4 Month mutual exclusivity
-  observeEvent(input$month, ignoreInit = TRUE, {
-    sel <- input$month
-    
-    if (is.null(sel)) return() 
-    # if a specific year is selected remove all months option
-    if ("All Months" %in% sel && length(sel) >1) {
-      updateSelectizeInput(
-        session,
-        "month",
-        selected = setdiff(sel, "All Months")
-      )
-    }
-    #if nothing is selected, revert to "All Months"
-    if (length(sel) ==0){
-      updateSelectizeInput(
-        session,
-        "month",
-        selected = "All Months"
-      )
-    }
-  })
-  
   
   # -----------------------------
   # Reactive dataset
   filtered_data_main <- reactive({
-    req(input$region, input$zone, input$year, input$month)
+    req(input$region, input$zone, input$month_year)
     df <- hmis_jul_dec
     
     if (!"All Regions" %in% input$region)
@@ -483,11 +406,8 @@ server <- function(input, output, session) {
     if (!"All Zones" %in% input$zone)
       df <- df |> filter(zone %in% input$zone)
     
-    if (!"All Years" %in% input$year)
-      df <- df |> filter(year %in% input$year)
-    
-    if (!"All Months" %in% input$month)
-      df <- df |> filter(month %in% input$month)
+    if (!"All Months" %in% input$month_year)
+      df <- df |> filter(month_year %in% input$month_year)
     
     df
   })
@@ -747,9 +667,7 @@ server <- function(input, output, session) {
           showgrid = FALSE,
           showticklabels = FALSE
         ),
-        xaxis = list(title = "",
-                     tickangle = -45
-        )
+        xaxis = list(title = "")
       )
   })
   
