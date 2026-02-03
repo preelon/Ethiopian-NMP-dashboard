@@ -9,10 +9,16 @@ library(readr)
 library(sf)
 
 # Read Data
-hmis_jul_dec <- read_csv("data/jul-dec-zone-cleaned-pop-integrated-latest.csv")
+hmis <- read_csv("data/jul-2024-dec-2025-zone-cleaned-pop-integrated-latest.csv")
 
-# read SF for map
-sf_woreda <- st_read("data/sf_cleaned/shape_file_for_mapping_cleaned.shp")
+# read SF for map & clean th zone names to reconcile it with keb level sf
+sf_woreda <- st_read("data/sf_cleaned/shape_file_for_mapping_cleaned.shp")|>
+  mutate(zone= case_when(zone == "Finfine Special" ~ "Shager City",
+                         zone == "Itang Special Woreda" ~ "Itang Special",
+                         zone == "Mirab Omo" ~ "West Omo",
+                         zone %in% c("Dire Dawa Urban", "Dire Dawa Rural") ~ "Dire Dawa",
+                         TRUE ~ zone))
+unique(sf_woreda$zone)
 
 # Map-ready sf 
 sf_woreda <- sf_woreda |>
@@ -37,7 +43,20 @@ sf_region <- sf_woreda |>
   st_make_valid()
 
 # Preparing Data
-hmis_jul_dec <- hmis_jul_dec |>
+# Create a sequence of months from Jul 2024 to Dec 2025
+month_seq <- seq(
+  from = as.Date("2024-07-01"), 
+  to   = as.Date("2025-12-01"), 
+  by   = "month"
+)
+
+# format the 
+
+# Format the sequence as "Mon-YYYY"
+month_yr_levels <- format(month_seq, "%b-%Y")
+
+# standardizing
+hmis <- hmis |>
   mutate(
     region = as.character(region),
     zone   = as.character(zone)
@@ -48,14 +67,16 @@ hmis_jul_dec <- hmis_jul_dec |>
     month_year = paste(month, year, sep = "-"),
     month_year = factor(
       month_year,
-      levels = c("Jul-2025", "Aug-2025", "Sep-2025", "Oct-2025", "Nov-2025", "Dec-2025")
+      month_yr_levels
     )
   ) |>
   mutate(
     greg_month = factor(greg_month,
-                        levels = c("Jul", "Aug", "Sep", "Oct", "Nov", "Dec")),
+                        levels = c("Jul", "Aug", "Sep", "Oct", "Nov", 
+                                   "Dec", "Jan", "Feb", "Mar", "Apr",
+                                   "May", "Jun")),
     greg_year = factor(as.character(greg_year),
-                       levels = "2025")
+                       levels = c("2024", "2025"))
   )
 #select(-greg_month, -greg_year)
 # Region Options 
@@ -63,10 +84,10 @@ regions <- c("Addis Ababa", "Afar", "Amhara","Benishangul Gumuz",
              "Central", "Dire Dawa", "Gambella","Harari", "Oromia",
              "Sidama","Somali", "South","South West","Tigray")
 
-months <- levels(hmis_jul_dec$month_year)  # proper month-year labels
-indicators <- sort(unique(as.character(hmis_jul_dec$data_type)))
+months <- levels(hmis$month_year)  # proper month-year labels
+indicators <- sort(unique(as.character(hmis$data_type)))
 
-zone_population <- hmis_jul_dec |>
+zone_population <- hmis |>
   distinct(region, zone, population)
 
 # Theme
@@ -80,7 +101,7 @@ app_theme <- bs_theme(
 )
 
 # Region-Zone Lookup 
-region_zone_lookup <- hmis_jul_dec |>
+region_zone_lookup <- hmis |>
   distinct(region, zone) |>
   arrange(region, zone)
 
@@ -133,7 +154,7 @@ ui <- page_sidebar(
     selectizeInput(
       inputId = "region",
       label = "Select Region",
-      choices = c("All Regions", unique(hmis_jul_dec$region)),
+      choices = c("All Regions", unique(hmis$region)),
       selected = "All Regions",
       multiple = TRUE
     ),
@@ -151,7 +172,7 @@ ui <- page_sidebar(
     selectizeInput(
       inputId = "year",
       label = "Select Year",
-      choices = c("All Years", as.character(levels(hmis_jul_dec$greg_year))),
+      choices = c("All Years", as.character(levels(hmis$greg_year))),
       selected = "All Years",
       multiple = TRUE
     ),
@@ -160,7 +181,7 @@ ui <- page_sidebar(
     selectizeInput(
       inputId = "month",
       label = "Select Month",
-      choices = c("All Months", as.character(levels(hmis_jul_dec$greg_month))),
+      choices = c("All Months", as.character(levels(hmis$greg_month))),
       selected = "All Months",
       multiple = TRUE
     )
@@ -188,9 +209,9 @@ ui <- page_sidebar(
         card_header("Data Sources"),
         card_body(
           tags$ul(
-            tags$li("DHIS2/HMIS disease (for species segregations & clinically diagnosed malaria cases) and service data (for malaria tests and positive results):Last updated: 21 January 2026, 13:00 EAT (UTC+3)"),
+            tags$li("DHIS2/HMIS disease (for species segregations & clinically diagnosed malaria cases) and service data (for malaria tests and positive results)-> Last updated: 2 February 2026, 11:00 EAT (UTC+3)"),
             tags$li("Zone-level population projections (projected from 2022 population from CSA)"),
-            tags$li("Reporting period selectable by month")
+            tags$li("The data currently used covers a period from Jul 2024 to Dec 2025; reporting periods are selectable by both month & year.")
           )
         )
       ),
@@ -202,9 +223,9 @@ ui <- page_sidebar(
             tags$li(strong("Test Positivity Rate (TPR): "),
                     "Confirmed malaria cases divided by the number tested."),
             tags$li(strong("Incidence Rate: "),
-                    "Estimated malaria cases per 1,000 population at risk per month (annualized if monthly view)."),
+                    "Estimated malaria cases per 1,000 at risk population (annualized if monthly view)."),
             tags$li(strong("Death Rate: "),
-                    "Malaria-related deaths per 100,000 population at risk (annualized if monthly view).")
+                    "Malaria-related deaths per 100,000 at risk population (annualized if monthly view).")
           )
         )
       ),
@@ -475,7 +496,7 @@ server <- function(input, output, session) {
   # Reactive dataset
   filtered_data_main <- reactive({
     req(input$region, input$zone, input$year, input$month)
-    df <- hmis_jul_dec
+    df <- hmis
     
     if (!"All Regions" %in% input$region)
       df <- df |> filter(region %in% input$region)
