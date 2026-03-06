@@ -9,7 +9,7 @@ library(readr)
 library(sf)
 
 # Read Data
-hmis <- read_csv("data/jan-2024-jan-2026-zone-cleaned-pop-integrated-latest.csv")
+hmis <- read_csv("data/jul-2024-dec-2025-zone-cleaned-pop-integrated-latest.csv")
 
 # read SF for map & clean th zone names to reconcile it with keb level sf
 sf_woreda <- st_read("data/sf_cleaned/shape_file_for_mapping_cleaned.shp")|>
@@ -45,8 +45,8 @@ sf_region <- sf_woreda |>
 # Preparing Data
 # Create a sequence of months from Jul 2024 to Dec 2025
 month_seq <- seq(
-  from = as.Date("2024-01-01"), 
-  to   = as.Date("2026-01-01"), 
+  from = as.Date("2024-07-01"), 
+  to   = as.Date("2025-12-01"), 
   by   = "month"
 )
 
@@ -72,11 +72,11 @@ hmis <- hmis |>
   ) |>
   mutate(
     greg_month = factor(greg_month,
-                        levels = c("Jan", "Feb", "Mar", "Apr",
-                                   "May", "Jun","Jul", "Aug", "Sep", "Oct", "Nov", 
-                                   "Dec")),
+                        levels = c("Jul", "Aug", "Sep", "Oct", "Nov", 
+                                   "Dec", "Jan", "Feb", "Mar", "Apr",
+                                   "May", "Jun")),
     greg_year = factor(as.character(greg_year),
-                       levels = c("2024", "2025", "2026"))
+                       levels = c("2024", "2025"))
   )
 #select(-greg_month, -greg_year)
 # Region Options 
@@ -209,9 +209,9 @@ ui <- page_sidebar(
         card_header("Data Sources"),
         card_body(
           tags$ul(
-            tags$li("DHIS2/HMIS disease (for species segregations & clinically diagnosed malaria cases) and service data (for malaria tests and positive results)-> Last updated: 25 February 2026, 11:00 EAT (UTC+3)"),
+            tags$li("DHIS2/HMIS disease (for species segregations & clinically diagnosed malaria cases) and service data (for malaria tests and positive results)-> Last updated: 2 February 2026, 11:00 EAT (UTC+3)"),
             tags$li("Zone-level population projections (projected from 2022 population from CSA)"),
-            tags$li("The data currently used covers a period from Jan 2024 to Jan 2026; reporting periods are selectable by both month & year.")
+            tags$li("The data currently used covers a period from Jul 2024 to Dec 2025; reporting periods are selectable by both month & year.")
           )
         )
       ),
