@@ -1,3 +1,5 @@
+#interim back up with aggregate view working
+class(hmis$greg_year_num)
 # Libraries
 library(tidyverse)
 library(lubridate)
@@ -9,7 +11,7 @@ library(readr)
 library(sf)
 
 # Read Data
-hmis <- read_csv("data/jan-2024-jan-2026-zone-cleaned-pop-integrated-latest.csv")
+hmis <- read_csv("data/jan-2020-Feb-2026-zone-cleaned-pop-integrated.csv")
 
 # read SF for map & clean th zone names to reconcile it with keb level sf
 sf_woreda <- st_read("data/sf_cleaned/shape_file_for_mapping_cleaned.shp")|>
@@ -43,14 +45,13 @@ sf_region <- sf_woreda |>
   st_make_valid()
 
 # Preparing Data
-# Create a sequence of months from Jul 2024 to Dec 2025
+# Create a sequence of months from Jan 2020 to Feb 2026
 month_seq <- seq(
-  from = as.Date("2024-01-01"), 
-  to   = as.Date("2026-01-01"), 
+  from = as.Date("2020-01-01"), 
+  to   = as.Date("2026-02-01"), 
   by   = "month"
 )
 
-# format the 
 
 # Format the sequence as "Mon-YYYY"
 month_yr_levels <- format(month_seq, "%b-%Y")
@@ -62,23 +63,26 @@ hmis <- hmis |>
     zone   = as.character(zone)
   ) |>
   mutate(
-    month = month(greg_date, label = TRUE, abbr = TRUE),
-    year = year(greg_date),
-    month_year = paste(month, year, sep = "-"),
-    month_year = factor(
-      month_year,
-      month_yr_levels
-    )
+    #month = month(greg_date, label = TRUE, abbr = TRUE),
+    #year = year(greg_date),
+    #month_year = paste(greg_month, gre_year, sep = "-"),
+    month_year = factor(month_year, levels = month_yr_levels)
   ) |>
   mutate(
     greg_month = factor(greg_month,
                         levels = c("Jan", "Feb", "Mar", "Apr",
                                    "May", "Jun","Jul", "Aug", "Sep", "Oct", "Nov", 
                                    "Dec")),
-    greg_year = factor(as.character(greg_year),
-                       levels = c("2024", "2025", "2026"))
-  )
-#select(-greg_month, -greg_year)
+    # Factor for UI (ordered dropdown)
+    greg_year_ui = factor(greg_year,
+                          levels = c("2020","2021", "2022", "2023", 
+                                     "2024", "2025", "2026")),
+    # Numeric for calculations
+    greg_year_num = as.numeric(greg_year)
+  ) |>
+  select(-greg_year)  # drop the original greg_year_num if you want
+
+#select(-greg_month, -greg_year_num)
 # Region Options 
 regions <- c("Addis Ababa", "Afar", "Amhara","Benishangul Gumuz",
              "Central", "Dire Dawa", "Gambella","Harari", "Oromia",
@@ -88,8 +92,14 @@ months <- levels(hmis$month_year)  # proper month-year labels
 indicators <- sort(unique(as.character(hmis$data_type)))
 
 zone_population <- hmis |>
-  distinct(region, zone, population)
+  distinct(region, zone, greg_year_num,population) |>  # keep population!
+  mutate(
+    region = as.character(region),
+    zone = as.character(zone),
+    population = as.numeric(population)  # make numeric to avoid "non-numeric argument" error
+  )
 
+is.list(zone_population$population)
 # Theme
 app_theme <- bs_theme(
   version = 5,
@@ -162,7 +172,7 @@ ui <- page_sidebar(
     # Zone
     selectizeInput(
       inputId = "zone",
-      label = "Select Zone (optional)",
+      label = "Select Zone",
       choices = "All Zones",
       selected = "All Zones",
       multiple = TRUE
@@ -172,7 +182,7 @@ ui <- page_sidebar(
     selectizeInput(
       inputId = "year",
       label = "Select Year",
-      choices = c("All Years", as.character(levels(hmis$greg_year))),
+      choices = c("All Years", as.character(levels(hmis$greg_year_ui))),
       selected = "All Years",
       multiple = TRUE
     ),
@@ -183,6 +193,14 @@ ui <- page_sidebar(
       label = "Select Month",
       choices = c("All Months", as.character(levels(hmis$greg_month))),
       selected = "All Months",
+      multiple = TRUE
+    ),
+    # facility_type filter
+    selectizeInput(
+      inputId = "facility_type",
+      label = "Select Facility Type",
+      choices = c("All Facilities", unique(hmis$facility_type)),
+      selected = "All Facilities",
       multiple = TRUE
     )
   ),
@@ -209,9 +227,9 @@ ui <- page_sidebar(
         card_header("Data Sources"),
         card_body(
           tags$ul(
-            tags$li("DHIS2/HMIS disease (for species segregations & clinically diagnosed malaria cases) and service data (for malaria tests and positive results)-> Last updated: 25 February 2026, 11:00 EAT (UTC+3)"),
+            tags$li("DHIS2/HMIS disease (for species segregations & clinically diagnosed malaria cases) and service data (for malaria tests and positive results)-> Last updated: 20 March 2026, 11:00 EAT (UTC+3)"),
             tags$li("Zone-level population projections (projected from 2022 population from CSA)"),
-            tags$li("The data currently used covers a period from Jan 2024 to Jan 2026; reporting periods are selectable by both month & year.")
+            tags$li("The data currently used covers a period from Jan 2020 to Feb 2026; reporting periods are selectable by both month & year.")
           )
         )
       ),
@@ -222,10 +240,17 @@ ui <- page_sidebar(
           tags$ul(
             tags$li(strong("Test Positivity Rate (TPR): "),
                     "Confirmed malaria cases divided by the number tested."),
-            tags$li(strong("Incidence Rate: "),
-                    "Estimated malaria cases per 1,000 at risk population (annualized if monthly view)."),
-            tags$li(strong("Death Rate: "),
-                    "Malaria-related deaths per 100,000 at risk population (annualized if monthly view).")
+            tags$li(strong("Annual Parasitic Incidence (API): "),
+                    "Adjusted malaria cases per 1,000 population (annualized when displayed in monthly view)."),
+            
+            tags$li(strong("Mortality Rate: "),
+                    "Malaria-related deaths per 100,000 population at risk (annualized when displayed in monthly view)."),
+            
+            tags$li(strong("Note:"),
+                    "When aggregated view is selected, values represent the mean annualized rate across selected years."),
+            
+            tags$li(strong("Data Completeness & Timeliness: "),  
+                    "The dashboard shows completeness and timeliness metrics for the HMIS service reports only. Non-zero reporting for completeness and timeliness started after mid-2022, so the plots are filtered to start from 2022.")
           )
         )
       ),
@@ -233,9 +258,23 @@ ui <- page_sidebar(
       card(
         card_header("Methodological Notes"),
         card_body(
-          p("Deaths: Malaria deaths were derived exclusively from inpatient department (IPD)."),
-          p("Case Adjustment: To account for periods and locations with incomplete malaria testing, reported clinical cases were adjusted by multiplying clinical case counts by the test positivity rate (TPR)."),
-          p("Risk Population: For incidence and death rate calculations, the population at risk was assumed to be 69% of the total population, in line with the Malaria National Strategic Plan (NSP) 2024/25–2026/27.")
+          p(strong("Case Adjustment: "),
+            "Clinical malaria cases were adjusted using the test positivity rate (TPR) to better approximate true malaria burden."),
+          
+          p(strong("Deaths: "),
+            "Malaria deaths were derived from inpatient department (IPD) records and include confirmed malaria cases only."),
+          
+          p(strong("Population Denominator: "),
+            "Population data are applied at zone level and aggregated to region or national level as needed. When multiple years are selected, the average population across years is used."),
+          
+          p(strong("Risk Population: "),
+            "For mortality calculations, 69% of the total population is assumed to be at risk, based on the National Malaria Strategic Plan (2024/25–2026/27)."),
+          
+          p(strong("Time Adjustment: "),
+            "For incomplete reporting periods, case and death counts are annualized to ensure comparability across time."),
+          
+          p(strong("Important: "),
+            "Facility type filters are not applied to incidence and mortality indicators, as rates require complete population denominators for valid interpretation.")
         )
       ),
       
@@ -311,9 +350,9 @@ ui <- page_sidebar(
             "Parasitic Incidence Rate (per 1,000)",
             # Radio buttons inside the header
             radioButtons(
-              inputId = "incidence_view",
+              inputId = "api_view",
               label = NULL,
-              choices = c("Aggregated", "Monthly"),
+              choices = c("Aggregated", "By Month"),
               inline = TRUE
             )
           ),
@@ -328,19 +367,45 @@ ui <- page_sidebar(
             radioButtons(
               inputId = "death_view",
               label = NULL,
-              choices = c("Aggregated", "Monthly"),
+              choices = c("Aggregated", "By Month"),
               inline = TRUE
             )
           ),
           plotlyOutput("plot_death_rate", height = "350px")
-        )
+        ),
         
+        # ROW 3: REPORTING PERFORMANCE
+        card(
+          card_header("Reporting Completeness"),
+          
+          radioButtons(
+            inputId = "completeness_view",
+            label = NULL,
+            choices = c("Aggregate", "By Month"),
+            selected = "Aggregate",
+            inline = TRUE
+          ),
+          
+          plotlyOutput("plot_completeness", height = "300px"),
+        ),
+        
+        card(
+          card_header("Reporting Timeliness"),
+          radioButtons(
+            inputId = "timeliness_view",
+            label = NULL,
+            choices = c("Aggregate", "By Month"),
+            selected = "Aggregate",
+            inline = TRUE
+          ),
+          
+          plotlyOutput("plot_timeliness", height = "300px")
+        )
       )
+      
     )
   )
 )
-
-
 
 
 # Server
@@ -491,11 +556,33 @@ server <- function(input, output, session) {
     }
   })
   
+  # 4 Facility type mutual exclusivity
+  observeEvent(input$facility_type, ignoreInit = TRUE, {
+    sel <- input$facility_type
+    
+    if (is.null(sel)) return() 
+    # if a specific facility type is selected remove all facilities option
+    if ("All Facilities" %in% sel && length(sel) >1) {
+      updateSelectizeInput(
+        session,
+        "facility_type",
+        selected = setdiff(sel, "All Facilities")
+      )
+    }
+    #if nothing is selected, revert to "All Facilities"
+    if (length(sel) ==0){
+      updateSelectizeInput(
+        session,
+        "facility_type",
+        selected = "All Facilities"
+      )
+    }
+  })
   
   # -----------------------------
   # Reactive dataset
   filtered_data_main <- reactive({
-    req(input$region, input$zone, input$year, input$month)
+    req(input$region, input$zone, input$year, input$month, input$facility_type)
     df <- hmis
     
     if (!"All Regions" %in% input$region)
@@ -505,13 +592,37 @@ server <- function(input, output, session) {
       df <- df |> filter(zone %in% input$zone)
     
     if (!"All Years" %in% input$year)
-      df <- df |> filter(year %in% input$year)
+      df <- df |> filter(greg_year_ui %in% input$year)
     
     if (!"All Months" %in% input$month)
-      df <- df |> filter(month %in% input$month)
+      df <- df |> filter(greg_month %in% input$month)
+    
+    if (!"All Facilities" %in% input$facility_type)
+      df <- df |> filter(facility_type %in% input$facility_type)
     
     df
   })
+  
+  prepared_data <- reactive({
+    req(filtered_data_main())
+    
+    df <- filtered_data_main() %>%
+      select(-population) %>%   
+      mutate(
+        region = as.character(region),
+        zone   = as.character(zone)
+      )
+    
+    pop_join <- zone_population %>%
+      select(region, zone, greg_year_num, population)
+    
+    df <- df %>%
+      left_join(pop_join, by = c("region", "zone", "greg_year_num"))
+    
+    df
+  })
+  
+  
   
   # -----------------------------
   # Map logic with corrected casing
@@ -565,7 +676,7 @@ server <- function(input, output, session) {
   # KPIs
   output$vb_tested <- renderText({
     
-    total_tested <- filtered_data_main() |>
+    total_tested <- prepared_data() |>
       filter(data_type == "tested") |>
       summarise(total = sum(value, na.rm = TRUE)) |>
       pull(total)
@@ -575,7 +686,7 @@ server <- function(input, output, session) {
   
   output$vb_confirmed <- renderText({
     
-    total_confirmed <- filtered_data_main() |>
+    total_confirmed <- prepared_data() |>
       filter(data_type == "positives") |>
       summarise(total = sum(value, na.rm = TRUE)) |>
       pull(total)
@@ -586,8 +697,8 @@ server <- function(input, output, session) {
   
   
   output$vb_allcases <- renderText({
-    total_cases <- filtered_data_main() |>
-      filter(data_type %in% c("positives", "presumed")) |>
+    total_cases <- prepared_data() |>
+      filter(data_type %in% c("positives", "clinical")) |>
       summarise(total = sum(value, na.rm = TRUE)) |>
       pull(total)
     
@@ -596,9 +707,9 @@ server <- function(input, output, session) {
   
   
   output$vb_death <- renderText({
-    total_deaths <- filtered_data_main() |>
+    total_deaths <- prepared_data() |>
       filter(
-        !data_type %in% c("presumed", "tested", "positives"),
+        !data_type %in% c("clinical", "tested", "positives"),
         department == "IPD",
         outcome == "Mortality"
       ) |>
@@ -612,7 +723,7 @@ server <- function(input, output, session) {
   # Tests & Positivity Trend 
   output$plot_test_positivity <- renderPlotly({
     
-    df_all <- filtered_data_main()
+    df_all <- prepared_data()
     
     total_tested <- df_all |>
       filter(data_type == "tested") |>
@@ -715,8 +826,9 @@ server <- function(input, output, session) {
           y = ~TPR,
           type = "scatter",
           mode = "lines+markers",
+          marker = list(size = 4),
           yaxis = "y2",
-          line = list(color = "#000000", width = 3),
+          line = list(width = 2),
           hovertemplate = "TPR: %{y:.1f}%<extra></extra>"
         )
       
@@ -740,10 +852,10 @@ server <- function(input, output, session) {
           type = "scatter",
           mode = "lines+markers",
           yaxis = "y2",
-          line = list(width = 3),
+          line = list(width = 2),
           marker = list(
-            color = "black",
-            size = 7
+            #color = "black",
+            size = 4
           ),
           hovertemplate = paste(
             "%{customdata}<br>",
@@ -777,7 +889,7 @@ server <- function(input, output, session) {
   
   output$plot_species_proportion <- renderPlotly({
     
-    df_raw <- filtered_data_main() |>
+    df_raw <- prepared_data() |>
       filter(data_type %in% c("pf_conf", "pv_conf", "mixed_conf"))
     
     # ---- NO DATA LOGIC ----
@@ -863,268 +975,601 @@ server <- function(input, output, session) {
   })
   
   
-  # 1 Incidence Plot with Toggle
+  # -----------------------------
+  # -----------------------------
+  # API / Parasitic Incidence Plot
+  # -----------------------------
   output$plot_incidence <- renderPlotly({
     
+    df <- prepared_data() %>%
+      mutate(facility_type = "All Facilities") # to only work for all facilities filter
+    
     # -------------------------
-    # 1. Prepare numerator
+    # 1️⃣ Prepare base dataset (cases)
     # -------------------------
-    cases_df <- filtered_data_main() %>%
-      filter(data_type %in% c("tested", "positives", "presumed")) %>%
-      pivot_wider(
-        names_from = data_type,
-        values_from = value,
-        values_fill = 0
-      ) %>%
-      group_by(region, zone, month_year) %>%
-      summarise(
-        positives = sum(positives, na.rm = TRUE),
-        presumed  = sum(presumed, na.rm = TRUE),
-        tested    = sum(tested, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
+    df_cases <- df %>%
+      filter(data_type %in% c("tested", "positives", "clinical")) %>%
+      group_by(region, zone, greg_year_num, greg_date, month_year, data_type) %>%
+      summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+      pivot_wider(names_from = data_type, values_from = value, values_fill = 0) %>%
       mutate(
         tpr = ifelse(tested > 0, positives / tested, 0),
-        adjusted_positive = positives + presumed * tpr
+        adjusted_positive = positives + clinical * tpr
       )
     
     # -------------------------
-    # 2. Population (denominator)
+    # 2️⃣ Geography logic
     # -------------------------
-    pop_df <- zone_population %>%
-      mutate(pop_at_risk = population*0.69)
+    if (!is.null(input$zone) && !"All Zones" %in% input$zone) {
+      geo_var <- "zone"
+      df_cases <- df_cases %>% filter(zone %in% input$zone)
+    } else if (!is.null(input$region) && !"All Regions" %in% input$region) {
+      geo_var <- "region"
+      df_cases <- df_cases %>% filter(region %in% input$region)
+    } else {
+      geo_var <- "region"
+      df_cases <- df_cases %>% mutate(region = "National")
+    }
     
-    df <- cases_df %>%
-      left_join(pop_df, by = c("region", "zone")) %>%
-      mutate(
-        monthly_incidence = (adjusted_positive / pop_at_risk) * 1000,
-        annualized_incidence = monthly_incidence * 12
-      )
+    # -------------------------
+    # 3️⃣ Population aggregation for selected geography
+    # -------------------------
+    pop_geo <- df %>%
+      select(region, zone, greg_year_num, population) %>%
+      distinct() %>%
+      mutate(population = as.numeric(population))
+    
+    if (geo_var == "zone") {
+      pop_geo <- pop_geo %>%
+        group_by(zone, greg_year_num) %>%
+        summarise(population = sum(population, na.rm = TRUE), .groups = "drop")
+    } else if (!is.null(input$region) && !"All Regions" %in% input$region) {
+      pop_geo <- pop_geo %>%
+        group_by(region, greg_year_num) %>%
+        summarise(population = sum(population, na.rm = TRUE), .groups = "drop")
+    } else {
+      # National
+      pop_geo <- pop_geo %>%
+        group_by(greg_year_num) %>%
+        summarise(population = sum(population, na.rm = TRUE), .groups = "drop") %>%
+        mutate(region = "National")
+    }
     
     # -------------------------
-    # 3. Toggle logic
+    # 4️⃣ Aggregated / Yearly view
     # -------------------------
-    if(input$incidence_view == "Aggregated") {
+    if (input$api_view == "Aggregated") {
       
-      # ---------------------
-      # Aggregated per geography
-      # ---------------------
-      if (!is.null(input$zone) && !"All Zones" %in% input$zone) {
-        plot_df <- df %>%
-          filter(zone %in% input$zone) %>%
-          group_by(zone) %>%
-          summarise(
-            annualized_incidence = mean(annualized_incidence, na.rm = TRUE),
-            .groups = "drop"
-          )
-        x_var <- "zone"
-        
-      } else if (!is.null(input$region) && !"All Regions" %in% input$region) {
-        plot_df <- df %>%
-          group_by(region) %>%
-          summarise(
-            annualized_incidence = sum(adjusted_positive, na.rm = TRUE) / 
-              sum(pop_at_risk, na.rm = TRUE) * 1000,
-            .groups = "drop"
-          )
-        x_var <- "region"
-        
-      } else {
-        plot_df <- df %>%
-          summarise(
-            annualized_incidence = sum(adjusted_positive, na.rm = TRUE) / 
-              sum(pop_at_risk, na.rm = TRUE) * 1000
-          ) %>%
-          mutate(region = "National")
-        x_var <- "region"
-      }
+      df_yearly <- df_cases %>%
+        group_by(.data[[geo_var]], greg_year_num) %>%
+        summarise(
+          total_cases = sum(adjusted_positive, na.rm = TRUE),
+          months_available = n_distinct(greg_date),
+          .groups = "drop"
+        ) %>%
+        left_join(pop_geo, by = c(geo_var, "greg_year_num")) %>%
+        mutate(
+          annualized_cases = ifelse(
+            months_available < 12,
+            total_cases * (12 / months_available),
+            total_cases
+          ),
+          population = as.numeric(population),
+          annualized_cases = as.numeric(annualized_cases)
+        )
       
-      # ---------------------
-      # Column plot
-      # ---------------------
+      # Aggregate across selected years
+      plot_df <- df_yearly %>%
+        mutate(api_yearly = annualized_cases / population * 1000) %>%
+        group_by(.data[[geo_var]]) %>%
+        summarise(
+          api = mean(api_yearly, na.rm = TRUE),
+          .groups = "drop"
+        )|>
+        filter(!is.na(api), is.finite(api))
+      
+      # Use plot_df for plotting
       p <- ggplot(plot_df, aes_string(
-        x = paste0("reorder(", x_var, ", annualized_incidence)"),
-        y = "annualized_incidence",
-        text = "paste0(round(annualized_incidence, 2), ' per 1,000')"
+        x = paste0("reorder(", geo_var, ", api)"),
+        y = "api",
+        text = "paste0(round(api,1), ' per 1,000')"
       )) +
         geom_col(fill = "cyan4") +
         coord_flip() +
-        labs(x = "", y = "Annualized incidence per 1,000") +
+        labs(x = "", y = "API per 1,000") +
         theme_minimal()
       
     } else {
-      
-      # ---------------------
-      # Monthly time series
-      # ---------------------
-      # Determine which geography variable to use
-      if (!is.null(input$zone) && !"All Zones" %in% input$zone) {
-        plot_df <- df %>% filter(zone %in% input$zone)
-        geo_var <- "zone"
-      } else if (!is.null(input$region) && !"All Regions" %in% input$region) {
-        plot_df <- df %>% filter(region %in% input$region)
-        geo_var <- "region"
-      } else {
-        plot_df <- df %>% mutate(region = "National")
-        geo_var <- "region"
-      }
-      
-      # Group by month + geography for line plot
-      plot_df <- plot_df %>%
-        group_by(month_year, !!sym(geo_var)) %>%
+      # -------------------------
+      # 5️⃣ Monthly view
+      # -------------------------
+      df_monthly <- df_cases %>%
+        group_by(.data[[geo_var]], greg_date, month_year, greg_year_num) %>%
         summarise(
-          annualized_incidence = sum(adjusted_positive, na.rm = TRUE) / 
-            sum(pop_at_risk, na.rm = TRUE) * 1000,
+          monthly_cases = sum(adjusted_positive, na.rm = TRUE),
           .groups = "drop"
+        ) %>%
+        left_join(pop_geo, by = c(geo_var, "greg_year_num")) %>%
+        mutate(
+          api = (monthly_cases * 12 / population) * 1000
+        ) %>%
+        filter(!is.na(api), is.finite(api))
+      
+      date_range <- range(df_monthly$greg_date, na.rm = TRUE)
+      n_months <- as.numeric(difftime(date_range[2], date_range[1], units = "days")) / 30
+      dtick_val <- if (n_months <= 12) "M1" else if (n_months <= 24) "M3" else if (n_months <= 60) "M6" else "M12"
+      tick_format_val <- if (n_months > 36) "%Y" else "%b %Y"
+      
+      p <- plot_ly(
+        df_monthly,
+        x = ~greg_date,
+        y = ~api,
+        color = as.formula(paste0("~", geo_var)),
+        type = "scatter",
+        mode = "lines+markers",
+        marker = list(size = 4),
+        text = ~paste0(round(api,1), " per 1,000"),
+        hoverinfo = "text"
+      ) %>%
+        layout(
+          yaxis = list(title = "API per 1,000"),
+          xaxis = list(
+            title = "",
+            tickformat = tick_format_val,
+            dtick = dtick_val,
+            tickangle = -45
+          )
         )
-      
-      # ---------------------
-      # Plot lines
-      # ---------------------
-      p <- ggplot(plot_df, aes_string(
-        x = "month_year",
-        y = "annualized_incidence",
-        color = geo_var,
-        group = geo_var,
-        text = "paste0(round(annualized_incidence, 2), ' per 1,000')"
-      )) +
-        geom_line(size = 0.8) +
-        geom_point(size = 1) +
-        labs(x = "Month-Year", y = "Annualized incidence per 1,000") +
-        theme_minimal()+
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-      
     }
     
     ggplotly(p, tooltip = "text")
-    
   })
   
-  
-  # ----------------------
-  # Death plot
+  #------------------------
+  # 2. Mortality Plot with Toggle
   output$plot_death_rate <- renderPlotly({
     
-    # -------------------------
-    # 1. Prepare numerator (deaths)
-    # -------------------------
-    deaths_df <- filtered_data_main() %>%
-      filter(
-        department == "IPD",
-        outcome == "Mortality",
-        !data_type %in% c("tested", "positives", "presumed")
-      ) %>%
-      group_by(region, zone, month_year) %>%
-      summarise(
-        deaths = sum(value, na.rm = TRUE),
-        .groups = "drop"
-      )
+    df <- prepared_data() %>%
+      mutate(facility_type = "All Facilities") # to only work for all facilities filter
     
     # -------------------------
-    # 2. Population (denominator)
+    # 1️⃣ Prepare base dataset (deaths)
     # -------------------------
-    pop_df <- zone_population %>%
-      mutate(pop_at_risk = population*0.69)
+    df_deaths <- df %>%
+      filter(data_type %in% c("pf_conf" ,"pv_conf", "pm_conf","po_conf","mixed_conf"),
+             department == "IPD",
+             outcome == "Mortality") %>%
+      group_by(region, zone, greg_year_num, greg_date, month_year) %>%
+      summarise(total_death = sum(value, na.rm = TRUE), .groups = "drop")
     
-    df <- deaths_df %>%
-      left_join(pop_df, by = c("region", "zone")) %>%
-      mutate(
-        monthly_rate_per_100k = (deaths / pop_at_risk) * 100000,
-        annualized_rate_per_100k = monthly_rate_per_100k * 12
-      )
+    if (nrow(df_deaths) == 0) {
+      return(no_data_plot("No mortality data for selected inputs"))
+    }
     
     # -------------------------
-    # 3. Toggle logic
+    # 2️⃣ Geography logic
     # -------------------------
-    if(input$death_view == "Aggregated") {
+    if (!is.null(input$zone) && length(input$zone) > 0 && !"All Zones" %in% input$zone) {
+      geo_var <- "zone"
+      df_deaths <- df_deaths %>% filter(zone %in% input$zone)
+    } else if (!is.null(input$region) && length(input$region) > 0 && !"All Regions" %in% input$region) {
+      geo_var <- "region"
+      df_deaths <- df_deaths %>% filter(region %in% input$region)
+    } else {
+      geo_var <- "region"
+      df_deaths <- df_deaths %>% mutate(region = "National")
+    }
+    
+    if (nrow(df_deaths) == 0) {
+      return(no_data_plot("No mortality data after geography filtering"))
+    }
+    
+    # -------------------------
+    # 3️⃣ Population aggregation for selected geography
+    # -------------------------
+    pop_geo <- df %>%
+      select(region, zone, greg_year_num, population) %>%
+      distinct() %>%
+      mutate(population = as.numeric(population))
+    
+    if (geo_var == "zone") {
+      pop_geo <- pop_geo %>%
+        group_by(zone, greg_year_num) %>%
+        summarise(population = sum(population, na.rm = TRUE), .groups = "drop")
+    } else if (!is.null(input$region) && length(input$region) > 0 && !"All Regions" %in% input$region) {
+      pop_geo <- pop_geo %>%
+        group_by(region, greg_year_num) %>%
+        summarise(population = sum(population, na.rm = TRUE), .groups = "drop")
+    } else {
+      # National
+      pop_geo <- pop_geo %>%
+        group_by(greg_year_num) %>%
+        summarise(population = sum(population, na.rm = TRUE), .groups = "drop") %>%
+        mutate(region = "National")
+    }
+    
+    # -------------------------
+    # 4️⃣ Aggregated / Yearly view
+    # -------------------------
+    if (input$death_view == "Aggregated") {
       
-      # Aggregated by selected geography
-      if (!is.null(input$zone) && !"All Zones" %in% input$zone) {
-        plot_df <- df %>%
-          filter(zone %in% input$zone) %>%
-          group_by(zone) %>%
-          summarise(
-            annualized_rate_per_100k = mean(annualized_rate_per_100k, na.rm = TRUE),
-            .groups = "drop"
-          )
-        x_var <- "zone"
-        
-      } else if (!is.null(input$region) && !"All Regions" %in% input$region) {
-        plot_df <- df %>%
-          group_by(region) %>%
-          summarise(
-            annualized_rate_per_100k = sum(deaths, na.rm = TRUE) / 
-              sum(pop_at_risk, na.rm = TRUE) * 100000,
-            .groups = "drop"
-          )
-        x_var <- "region"
-        
-      } else {
-        plot_df <- df %>%
-          summarise(
-            annualized_rate_per_100k = sum(deaths, na.rm = TRUE) / 
-              sum(pop_at_risk, na.rm = TRUE) * 100000
-          ) %>%
-          mutate(region = "National")
-        x_var <- "region"
+      df_yearly <- df_deaths %>%
+        group_by(.data[[geo_var]], greg_year_num) %>%
+        summarise(
+          total_deaths = sum(total_death, na.rm = TRUE),
+          months_available = n_distinct(greg_date),
+          .groups = "drop"
+        ) %>%
+        left_join(pop_geo, by = c(geo_var, "greg_year_num")) %>%
+        mutate(
+          annualized_deaths = ifelse(
+            months_available < 12,
+            total_deaths * (12 / months_available),
+            total_deaths
+          ),
+          population = as.numeric(population),
+          annualized_deaths = as.numeric(annualized_deaths)
+        )
+      
+      if (nrow(df_yearly) == 0) {
+        return(no_data_plot("No mortality data after joining population"))
       }
       
-      # Column chart
+      # Aggregate across selected years
+      plot_df <- df_yearly %>%
+        mutate(
+          mortality_yearly = annualized_deaths / (population * 0.69) * 100000
+        ) %>%
+        group_by(.data[[geo_var]]) %>%
+        summarise(
+          mortality_per_100k = mean(mortality_yearly, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        filter(!is.na(mortality_per_100k), is.finite(mortality_per_100k))
+      
+      # Plot
       p <- ggplot(plot_df, aes_string(
-        x = paste0("reorder(", x_var, ", annualized_rate_per_100k)"),
-        y = "annualized_rate_per_100k",
-        text = "paste0(round(annualized_rate_per_100k, 2), ' per 100,000')"
+        x = paste0("reorder(", geo_var, ", mortality_per_100k)"),
+        y = "mortality_per_100k",
+        text = "paste0(round(mortality_per_100k,1), ' per 100,000')"
       )) +
         geom_col(fill = "cyan4") +
         coord_flip() +
-        labs(x = "", y = "Annualized mortality per 100,000") +
+        labs(x = "", y = "Mortality per 100,000") +
         theme_minimal()
       
     } else {
+      # -------------------------
+      # 5️⃣ Monthly view
+      # -------------------------
+      df_monthly <- df_deaths %>%
+        group_by(.data[[geo_var]], greg_date, month_year, greg_year_num) %>%
+        summarise(
+          monthly_deaths = sum(total_death, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        left_join(pop_geo, by = c(geo_var, "greg_year_num")) %>%
+        mutate(
+          mortality_per_100k = (monthly_deaths * 12 / (population * 0.69)) * 100000
+        ) %>%
+        filter(!is.na(mortality_per_100k), is.finite(mortality_per_100k))
       
-      # -------------------------
-      # Monthly time series
-      # -------------------------
-      if (!is.null(input$zone) && !"All Zones" %in% input$zone) {
-        plot_df <- df %>% filter(zone %in% input$zone)
-        geo_var <- "zone"
-      } else if (!is.null(input$region) && !"All Regions" %in% input$region) {
-        plot_df <- df %>% filter(region %in% input$region)
-        geo_var <- "region"
-      } else {
-        plot_df <- df %>% mutate(region = "National")
-        geo_var <- "region"
+      if (nrow(df_monthly) == 0) {
+        return(no_data_plot("No monthly mortality data after joining population"))
       }
       
-      # Group by month + geography
-      plot_df <- plot_df %>%
-        group_by(month_year, !!sym(geo_var)) %>%
-        summarise(
-          annualized_rate_per_100k = sum(deaths, na.rm = TRUE) / 
-            sum(pop_at_risk, na.rm = TRUE) * 100000,
-          .groups = "drop"
+      date_range <- range(df_monthly$greg_date, na.rm = TRUE)
+      n_months <- as.numeric(difftime(date_range[2], date_range[1], units = "days")) / 30
+      dtick_val <- if (n_months <= 12) "M1" else if (n_months <= 24) "M3" else if (n_months <= 60) "M6" else "M12"
+      tick_format_val <- if (n_months > 36) "%Y" else "%b %Y"
+      
+      p <- plot_ly(
+        df_monthly,
+        x = ~greg_date,
+        y = ~mortality_per_100k,
+        color = as.formula(paste0("~", geo_var)),
+        type = "scatter",
+        mode = "lines+markers",
+        marker = list(size = 4),
+        text = ~paste0(round(mortality_per_100k,1), " per 100,000"),
+        hoverinfo = "text"
+      ) %>%
+        layout(
+          yaxis = list(title = "Mortality per 100,000"),
+          xaxis = list(
+            title = "",
+            tickformat = tick_format_val,
+            dtick = dtick_val,
+            tickangle = -45
+          )
         )
-      
-      # Line plot
-      p <- ggplot(plot_df, aes_string(
-        x = "month_year",
-        y = "annualized_rate_per_100k",
-        color = geo_var,
-        group = geo_var,
-        text = "paste0(round(annualized_rate_per_100k, 2), ' per 100,000')"
-      )) +
-        geom_line(size = 0.8) +
-        geom_point(size = 1) +
-        labs(x = "Month-Year", y = "Annualized mortality per 100,000") +
-        theme_minimal()+
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-      
     }
     
     ggplotly(p, tooltip = "text")
   })
   
+  output$plot_completeness <- renderPlotly({
+    
+    df <- prepared_data() %>%
+      filter(greg_year_num >= 2022)
+    
+    # Keep only needed data types
+    df <- df |> 
+      filter(data_type %in% c("actual_reports", "expected_reports"))
+    
+    # ---- No data check ----
+    total_expected <- df |> 
+      filter(data_type == "expected_reports") |> 
+      summarise(total = sum(value, na.rm = TRUE)) |> 
+      pull(total)
+    
+    if (nrow(df) == 0 || is.na(total_expected) || total_expected == 0) {
+      return(no_data_plot())
+    }
+    
+    # =========================
+    # AGGREGATED VIEW (GAUGE)
+    # =========================
+    if (input$completeness_view == "Aggregate") {
+      
+      actual <- df |> 
+        filter(data_type == "actual_reports") |> 
+        summarise(val = sum(value, na.rm = TRUE)) |> 
+        pull(val)
+      
+      expected <- df |> 
+        filter(data_type == "expected_reports") |> 
+        summarise(val = sum(value, na.rm = TRUE)) |> 
+        pull(val)
+      
+      value <- (actual / expected) * 100
+      
+      p <- plot_ly(
+        type = "indicator",
+        mode = "gauge+number",
+        value = value,
+        number = list(suffix = "%"),
+        gauge = list(
+          axis = list(range = c(0, 100)),
+          bar = list(color = "cyan4", thickness = 0.5),
+          steps = list(
+            list(range = c(0, 80), color = "#f4a59c"),
+            list(range = c(80, 89), color = "#fcd581"),
+            list(range = c(90, 100), color = "#90c7b1")
+          ),
+          threshold = list(
+            value = 90,
+            line = list(color = "black", width = 2)
+          )
+        )
+      )
+      
+      return(p)
+    }
+    
+    # =========================
+    # BY MONTH (MULTI-LINE)
+    # =========================
+    
+    # ---- Determine geography ----
+    if (!is.null(input$zone) && !"All Zones" %in% input$zone) {
+      geo_var <- "zone"
+      df <- df |> filter(zone %in% input$zone)
+      
+    } else if (!is.null(input$region) && !"All Regions" %in% input$region) {
+      geo_var <- "region"
+      df <- df |> filter(region %in% input$region)
+      
+    } else {
+      geo_var <- "region"
+      df <- df |> mutate(region = "National")
+    }
+    
+    # ---- Aggregate ----
+    df_trend <- df |>
+      group_by(greg_date, !!sym(geo_var), data_type) |>
+      summarise(value = sum(value, na.rm = TRUE), .groups = "drop") |>
+      tidyr::pivot_wider(names_from = data_type, values_from = value, values_fill = 0) |>
+      mutate(
+        completeness = ifelse(expected_reports > 0,
+                              (actual_reports / expected_reports) * 100,
+                              NA)
+      ) |>
+      arrange(greg_date)
+    
+    # ---- Dynamic x-axis scaling ----
+    date_range <- range(df_trend$greg_date, na.rm = TRUE)
+    n_months <- as.numeric(difftime(date_range[2], date_range[1], units = "days")) / 30
+    
+    dtick_val <- if (n_months <= 12) {
+      "M1"
+    } else if (n_months <= 24) {
+      "M3"
+    } else if (n_months <= 60) {
+      "M6"
+    } else {
+      "M12"
+    }
+    
+    tick_format_val <- if (n_months > 36) "%Y" else "%b %Y"
+    
+    # ---- Plot ----
+    p <- plot_ly(
+      df_trend,
+      x = ~greg_date,
+      y = ~completeness,
+      color = ~get(geo_var),
+      type = "scatter",
+      mode = "lines+markers",
+      marker = list(size = 4),
+      # Hover text showing Month-Year and completeness
+      text = ~paste0(format(greg_date, "%b %Y"), ": ", round(completeness, 1), "%"),
+      hoverinfo = "text"
+    ) |>
+      layout(
+        yaxis = list(title = "% Completeness", range = c(0, 100)),
+        xaxis = list(
+          title = "",
+          tickformat = tick_format_val,
+          tickangle = -45,
+          dtick = dtick_val
+        ),
+        shapes = list(
+          list(
+            type = "line",
+            x0 = min(df_trend$greg_date, na.rm = TRUE),
+            x1 = max(df_trend$greg_date, na.rm = TRUE),
+            y0 = 90,
+            y1 = 90,
+            line = list(dash = "dash", color = "black")
+          )
+        )
+      )
+    
+    p
+  })
   
+  
+  output$plot_timeliness <- renderPlotly({
+    
+    df <- prepared_data() %>%
+      filter(greg_year_num >= 2022)
+    
+    # Keep only needed data types
+    df <- df |> 
+      filter(data_type %in% c("actual_reports_ontime", "expected_reports"))
+    
+    # ---- No data check ----
+    total_expected <- df |> 
+      filter(data_type == "expected_reports") |> 
+      summarise(total = sum(value, na.rm = TRUE)) |> 
+      pull(total)
+    
+    if (nrow(df) == 0 || is.na(total_expected) || total_expected == 0) {
+      return(no_data_plot())
+    }
+    
+    # =========================
+    # AGGREGATED VIEW (GAUGE)
+    # =========================
+    if (input$timeliness_view == "Aggregate") {
+      
+      actual <- df |> 
+        filter(data_type == "actual_reports_ontime") |> 
+        summarise(val = sum(value, na.rm = TRUE)) |> 
+        pull(val)
+      
+      expected <- df |> 
+        filter(data_type == "expected_reports") |> 
+        summarise(val = sum(value, na.rm = TRUE)) |> 
+        pull(val)
+      
+      value <- (actual / expected) * 100
+      
+      p <- plot_ly(
+        type = "indicator",
+        mode = "gauge+number",
+        value = value,
+        number = list(suffix = "%"),
+        gauge = list(
+          axis = list(range = c(0, 100)),
+          bar = list(color = "cyan4", thickness = 0.5),
+          steps = list(
+            list(range = c(0, 80), color = "#f4a59c"),
+            list(range = c(80, 89), color = "#fcd581"),
+            list(range = c(90, 100), color = "#90c7b1")
+          ),
+          threshold = list(
+            value = 90,
+            line = list(color = "black", width = 2)
+          )
+        )
+      )
+      
+      return(p)
+    }
+    
+    # =========================
+    # BY MONTH (MULTI-LINE)
+    # =========================
+    
+    # ---- Determine geography ----
+    if (!is.null(input$zone) && !"All Zones" %in% input$zone) {
+      geo_var <- "zone"
+      df <- df |> filter(zone %in% input$zone)
+      
+    } else if (!is.null(input$region) && !"All Regions" %in% input$region) {
+      geo_var <- "region"
+      df <- df |> filter(region %in% input$region)
+      
+    } else {
+      geo_var <- "region"
+      df <- df |> mutate(region = "National")
+    }
+    
+    # ---- Aggregate ----
+    df_trend <- df |>
+      group_by(greg_date, !!sym(geo_var), data_type) |>
+      summarise(value = sum(value, na.rm = TRUE), .groups = "drop") |>
+      tidyr::pivot_wider(names_from = data_type, values_from = value, values_fill = 0) |>
+      mutate(
+        timeliness = ifelse(expected_reports > 0,
+                            (actual_reports_ontime / expected_reports) * 100,
+                            NA)
+      ) |>
+      arrange(greg_date)
+    
+    # ---- Dynamic x-axis scaling ----
+    date_range <- range(df_trend$greg_date, na.rm = TRUE)
+    n_months <- as.numeric(difftime(date_range[2], date_range[1], units = "days")) / 30
+    
+    dtick_val <- if (n_months <= 12) {
+      "M1"
+    } else if (n_months <= 24) {
+      "M3"
+    } else if (n_months <= 60) {
+      "M6"
+    } else {
+      "M12"
+    }
+    
+    tick_format_val <- if (n_months > 36) "%Y" else "%b %Y"
+    
+    # ---- Plot ----
+    p <- plot_ly(
+      df_trend,
+      x = ~greg_date,
+      y = ~timeliness,
+      color = ~get(geo_var),
+      type = "scatter",
+      mode = "lines+markers",
+      marker = list(size = 4),
+      # Hover text: show Month-Year and value
+      text = ~paste0(format(greg_date, "%b %Y"), ": ", round(timeliness, 1), "%"),
+      hoverinfo = "text"
+    ) |>
+      layout(
+        yaxis = list(title = "% Timeliness", range = c(0, 100)),
+        xaxis = list(
+          title = "",
+          tickformat = tick_format_val,
+          tickangle = -45,
+          dtick = dtick_val
+        ),
+        shapes = list(
+          list(
+            type = "line",
+            x0 = min(df_trend$greg_date, na.rm = TRUE),
+            x1 = max(df_trend$greg_date, na.rm = TRUE),
+            y0 = 90,
+            y1 = 90,
+            line = list(dash = "dash", color = "black")
+          )
+        )
+      )
+    
+    p
+  })
   
 }
 
