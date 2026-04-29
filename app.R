@@ -1,5 +1,5 @@
 #interim back up with aggregate view working
-class(hmis$greg_year_num)
+
 # Libraries
 library(tidyverse)
 library(lubridate)
